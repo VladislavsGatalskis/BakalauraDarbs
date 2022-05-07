@@ -2189,7 +2189,7 @@ class MaskRCNN():
             loss=[None] * len(self.keras_model.outputs))
 
         # Add metrics for losses
-        for name in loss_names:
+        for name in loss_names:  
             if name in self.keras_model.metrics_names:
                 continue
             layer = self.keras_model.get_layer(name)
@@ -2197,9 +2197,9 @@ class MaskRCNN():
             loss = (
                 tf.reduce_mean(layer.output, keepdims=True)
                 * self.config.LOSS_WEIGHTS.get(name, 1.))
-            # self.keras_model.metrics_tensors.append(loss)
-            self.keras_model.add_loss(loss)
-            # self.keras_model.add_metric(loss, name)
+            # self.keras_model.metrics_tensors.append(loss) # Default? Keras 2.0.8?
+            # self.keras_model.add_loss(loss)               # Keras 2.1.5
+            self.keras_model.add_metric(loss, name)         # Keras 2.3.0 (Adds all losses metrics)
 
     def set_trainable(self, layer_regex, keras_model=None, indent=0, verbose=1):
         """Sets model layers as trainable if their names match
