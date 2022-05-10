@@ -62,8 +62,6 @@ class CustomConfig(Config):
 
     # Number of classes
     NUM_CLASSES = 1 + 10 # BG + (car, person, face, flag banner, wall banner, fence banner, grass, forest, tent, podium)
-    # NUM_CLASSES = 1 + 8 # BG + (face, flag banner, wall banner, fence banner, grass, forest, tent, podium)
-    # NUM_CLASSES = 1 + 2 # BG + (faces, flags)
     # NUM_CLASSES = 1 + 1 # default for 1 class
 
     # Use small images for faster training. Set the limits of the small side
@@ -80,63 +78,17 @@ class CustomConfig(Config):
     # few objects. Aim to allow ROI sampling to pick 33% positive ROIs.
     # TRAIN_ROIS_PER_IMAGE = 32
 
-
-
-    # BIG test TRAINING
-
     # Use a small epoch since the data is simple
-    STEPS_PER_EPOCH = 200
+    STEPS_PER_EPOCH = 76
 
     # use small validation steps since the epoch is small
     VALIDATION_STEPS = 20
 
     DETECTION_MIN_CONFIDENCE = 0.9
 
-    HEADS_EPOCHS = 10
-
-
-
-    # # THIRD TRAINING
-
-    # # Use a small epoch since the data is simple
-    # STEPS_PER_EPOCH = 100
-
-    # # use small validation steps since the epoch is small
-    # VALIDATION_STEPS = 11
-
-    # DETECTION_MIN_CONFIDENCE = 0.9
-
-    # HEADS_EPOCHS = 15
-
-
-    
-    # # SECOND TRAINING
-
-    # # Use a small epoch since the data is simple
-    # STEPS_PER_EPOCH = 90
-
-    # # use small validation steps since the epoch is small
-    # VALIDATION_STEPS = 9
-
-    # DETECTION_MIN_CONFIDENCE = 0.9
-
-    # HEADS_EPOCHS = 10
-
-    
-
-    # # FIRST TRAINING
-
-    # # Use a small epoch since the data is simple
-    # STEPS_PER_EPOCH = 76
-
-    # # use small validation steps since the epoch is small
-    # VALIDATION_STEPS = 8
-
-    # DETECTION_MIN_CONFIDENCE = 0.9
-
-    # HEADS_EPOCHS = 7
-
-    ALL_LAYERS_EPOCHS = 20
+    HEADS_EPOCHS = 20
+    STAGE_4_PLUS_EPOCHS = 60
+    ALL_LAYERS_EPOCHS = 100
 
 """
 NOTEBOOK PREFERENCES
@@ -280,13 +232,14 @@ class CustomDataset(utils.Dataset):
         class_number = len(class_ids)
         return class_number
 
-def load_training_model(config):
+# init_with: imagenet or last (None = coco)
+def load_training_model(config, init_with=None):
     model = modellib.MaskRCNN(mode="training", config=config,
                               model_dir=MODEL_DIR)
 
     # Which weights to start with?
-    # init_with = "last"  # imagenet, coco, or last
-    init_with = "coco"  # imagenet, coco, or last
+    if not init_with:
+        init_with = "coco"
 
     if init_with == "imagenet":
         model.load_weights(model.get_imagenet_weights(), by_name=True)
@@ -333,12 +286,18 @@ def train_head(model, dataset_train, dataset_val, config):
             epochs=config.HEADS_EPOCHS,
             layers='heads')
 
+def train_stage4plus(model, dataset_train, dataset_val, config):
+    model.train(dataset_train, dataset_val,
+            learning_rate=config.LEARNING_RATE / 3,
+            epochs=config.STAGE_4_PLUS_EPOCHS,
+            layers='4+')
+
 
 def train_all_layers(model, dataset_train, dataset_val, config):
     model.train(dataset_train, dataset_val,
-                learning_rate=config.LEARNING_RATE / 10,
-                epochs=config.ALL_LAYERS_EPOCHS,
-                layers="all")
+            learning_rate=config.LEARNING_RATE / 10,
+            epochs=config.ALL_LAYERS_EPOCHS,
+            layers="all")
 
 
 """ DETECTION TEST YOUR MODEL """
@@ -367,7 +326,7 @@ def extract_images(my_zip, output_dir):
         print("Extracted: {} images".format(count))
 
 
-def load_test_model(num_classes):
+def load_test_model(num_classes, model_path=None):
     inference_config = InferenceConfig(num_classes)
 
     # Recreate the model in inference mode
@@ -378,7 +337,8 @@ def load_test_model(num_classes):
     # Get path to saved weights
     # Either set a specific path or find last trained weights
     # model_path = os.path.join(ROOT_DIR, ".h5 file name here")
-    model_path = model.find_last()
+    if not model_path:
+        model_path = model.find_last()
 
     # Load trained weights
     print("Loading weights from ", model_path)
@@ -449,5 +409,10 @@ def test_image_by_id(test_model, dataset_test, inference_config, image_id):
     results = test_model.detect([original_image], verbose=1)
     r = results[0]
     print(r['class_ids'])
+    
+    unique, counts = np.unique(r['class_ids'], return_counts=True)
+    result = np.column_stack((unique, counts)) 
+    print(result)
+
     visualize.display_instances(original_image, r['rois'], r['masks'], r['class_ids'],
                                 dataset_test.class_names, r['scores'], ax=get_ax(), show_bbox=False)
