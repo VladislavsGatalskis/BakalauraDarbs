@@ -87,7 +87,7 @@ class CustomConfig(Config):
     DETECTION_MIN_CONFIDENCE = 0.9
 
     HEADS_EPOCHS = 20
-    STAGE_4_PLUS_EPOCHS = 60
+    STAGE_4_PLUS_EPOCHS = 80
     ALL_LAYERS_EPOCHS = 100
 
 """
@@ -232,8 +232,8 @@ class CustomDataset(utils.Dataset):
         class_number = len(class_ids)
         return class_number
 
-# init_with: imagenet or last (None = coco)
-def load_training_model(config, init_with=None):
+# init_with: imagenet, last or custom  (None = coco)
+def load_training_model(config, init_with=None, model_path=None):
     model = modellib.MaskRCNN(mode="training", config=config,
                               model_dir=MODEL_DIR)
 
@@ -254,6 +254,9 @@ def load_training_model(config, init_with=None):
     elif init_with == "last":
         # Load the last model you trained and continue training
         model.load_weights(model.find_last(), by_name=True)
+    elif init_with == "custom":
+        model.load_weights(model_path, by_name=True)
+
 
     return model
 
