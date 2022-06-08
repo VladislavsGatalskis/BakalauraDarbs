@@ -389,9 +389,187 @@ def test_random_image(test_model, dataset_val, inference_config):
     visualize.display_instances(original_image, r['rois'], r['masks'], r['class_ids'],
                                 dataset_val.class_names, r['scores'], ax=get_ax(), show_bbox=False)
 
-    # print("Annotation")
-    # visualize.display_instances(original_image, gt_bbox, gt_mask, gt_class_id,
-    #                             dataset_val.class_names, figsize=(8, 8))
+    print("Annotation")
+    visualize.display_instances(original_image, gt_bbox, gt_mask, gt_class_id,
+                                dataset_val.class_names, figsize=(20, 20))
+
+def classifyImage(results, bigGroupMin, bigGroupMax):
+
+    """
+    Funkcija veic fotogrâfijas augsta lîmeòa klasificçðanu,
+    balstoties uz instanèu segmentçðanas modeïa atgriztajiem
+    rezultâtiem.
+
+    /Params/
+    results:      Saraksts ar Mask-RCNN modeïa iegûtajiem 
+                  resultâtiem ("class_ids", "scores" etc.)
+
+    bigGroupMin:  Subjektîvi definçtais minimâlais cilvçku skaits
+                  lielâ cilvçku grupâ. Cilvçku skaits, kas ir mazâks
+                  par ðo vçrtîbu, definç mazo cilveku grupu 
+                  ("Maza cilvçku grupa" tiek definçta, ja ir atrasti
+                  vismaz 3 cilvçki).
+                  
+    bigGroupMax:  Subjektîvi definçtais maksimâlais cilvçku skaits
+                  lielâ cilvçku grupâ. Ja cilvçku skaits ir lielâks
+                  par ðo vçrtîbu, tad tiks izmantota kategorija "cilvçku 
+                  pûlis".
+    
+
+    /Returns/
+    peopleGroupSize:    Kategorijas veida "cilvçku grupas lielums" kategorija
+    location:           Kategorijas veida "atraðanâs vieta" kategorija
+    facingPosition:     Kategorijas veida "cilvçku novietojums pret kameru" kategorija
+
+   """
+
+    # Vârdnîca, kura sasaista definçtos kategoriju
+    # nosaukumus ar instanèu segmentçðanas modeïâ 
+    # klaðu identifikatoriem ('class_ids).
+    classDict = {
+        "car":          1,
+        "person":       2,
+        "face":         3,
+        "podium":       4,
+        "tent":         5, 
+        "flag banner":  6, 
+        "banner wall":  7,
+        "forest":       8,
+        "grass":        9,
+        "fence banner": 10
+    }
+
+    # Objects that describe specific location (location: [objects])
+    # This order is used to create a priority dictionary
+    #       winnersPodiumArea:    banner wall, podium
+    #       parkingArea:          car
+    #       mainEventArea:        tent, fence banner, flag banner
+    #       lawn:                 grass
+    #       forestFromInside:     forest
+
+    # Priority dictionary defines the order in which
+    # each found class is processed.
+    classPriorityDict = {
+        7: 1,   # "banner wall"
+        4: 1,   # "podium"
+        1: 2,   # "car"
+        5: 3,   # "tent"
+        10: 3,  # "fence banner"
+        6: 3,   # "flag banner"
+        9: 4,   # "grass"
+        8: 5,   # "forest"
+        3: 6,   # "face"
+        2: 7    # "person"
+    }
+
+    # Creates a list of each class found object count (tuples)
+    unique, counts = np.unique(results['class_ids'], return_counts=True)
+    result = np.column_stack((unique, counts)) 
+    
+    resultList = result.tolist()
+    
+    # To every tuple add one more element (priority)
+    resultWithPriorities = []
+    for object in resultList:
+        class_id = object[0]
+        object.append(classPriorityDict[class_id])
+        resultWithPriorities.append(object)
+
+    # Sort tuples 
+    from operator import itemgetter
+    resultWithPrioritiesSorted = sorted(resultWithPriorities, key=itemgetter(2), reverse=True)
+
+    # Mainîgie, kuri apzîmç definçtos fotogrâfiju
+    # kolekcijas veidus.
+    location = "in Unknown Location"
+    personGroupSize = "Zero people"
+    facingPosition = ""
+
+    # Mainîgie, kuri tiek izmantoti "facingPosition" vçrtîbas
+    # noteikðanai un izòçmuma gadîjumu apstrâdei.
+    personCountInt = 0
+    faceCountInt = 0
+
+    # Cikls, kurâ apstrâdâ katru atrasto klasi, 
+    # òemot vçrâ arî atrasto objektu skaitu.
+    for object in resultWithPrioritiesSorted:
+        class_id = object[0]
+        count    = object[1]
+
+        # Kategorijas veida "cilvçku grupas lielums" pieðíirðana.
+        if class_id == classDict["person"]:
+            personCountInt = count
+
+            if count == 1:
+                personGroupSize = "One person"
+            elif count == 2:
+                personGroupSize = "Two people"
+            elif count >= 3 and count < bigGroupMin:
+                personGroupSize = f"Small group of people"
+            elif count >= bigGroupMin and count <= bigGroupMax:
+                personGroupSize = f"Big group of people"
+            elif count > bigGroupMax:
+                personGroupSize = f"Crowd of people"
+
+            continue
+        
+        # Kategorijas veida "cilvçku novietojums pret kameru" pieðíirðana.
+        if class_id == classDict["face"]:
+            faceCountInt = count
+
+            if count >= (int(personCountInt / 2)) and personCountInt < 11:
+                facingPosition = "facing camera"
+            elif count >= (int(personCountInt / 3)) and personCountInt >= 11: # vai pat (x / 4) nevis (x / 3)! TEST
+                facingPosition = "facing camera"
+            elif count >= (int(personCountInt / 4)) and personCountInt >= 20:
+                facingPosition = "facing camera"
+            elif personCountInt >= 25:  # Gandrîz vai neredz sejas
+                facingPosition = ""     # tâpçc neko neraksta, jo îsti nevar pateikt 
+            else:
+                facingPosition = "not facing camera"
+
+            continue        
+        
+        # Atraðanâs vietas pieðíirðana
+        if class_id == classDict["forest"]:
+            location = "in Forest"
+        elif class_id == classDict["grass"]:
+            location = "on Lawn"
+        elif class_id == classDict["tent"] or class_id == classDict["fence banner"] or \
+             class_id == classDict["flag banner"] or class_id == classDict["car"] and count < 3:
+            location = "in Main Event Area"
+        elif class_id == classDict["car"] and count >= 3:
+            location = "in Parking Area"
+        elif class_id == classDict["podium"] or class_id == classDict["banner wall"]:
+            location = "in Winners Podium Area"
+
+    # Ja neatrada nevienu seju bet atrada cilvçkus no 1 - 24, 
+    # tad cilvçki ir vçrsti pert kameru ar muguru.
+    if faceCountInt == 0 and (personCountInt < 25 and personCountInt > 0):
+        facingPosition = "not facing camera" 
+ 
+    # Ja neatrada nevienu cilvçku, tad atstâj mainîgo tukðu
+    if personCountInt == 0:
+        facingPosition = ""
+
+    # Izòçmumgadîjums: Seju skaits ir lielâks nekâ atrasto cilvçku skaits
+    # Tâdâ gadîjumâ cilvçku skaitu nosaka seju skaits
+    if personCountInt < faceCountInt:
+        if faceCountInt == 1:
+            personGroupSize = f"One person"
+        elif faceCountInt == 2:
+            personGroupSize = f"Two people"
+        elif faceCountInt >= 3 and faceCountInt < bigGroupMin:
+            personGroupSize = f"Small group of people"
+        elif faceCountInt >= bigGroupMin and faceCountInt <= bigGroupMax:
+            personGroupSize = f"Big group of people"
+        elif faceCountInt > bigGroupMax:
+            personGroupSize = f"Crowd of people"
+
+    # Izprintç fotogrâfijas augsta lîmeòa kategoriju
+    print("Classified as: ", personGroupSize, location, facingPosition)
+
+    return personGroupSize, location, facingPosition
 
 
 
@@ -408,14 +586,168 @@ def test_image_by_id(test_model, dataset_test, inference_config, image_id):
     # log("gt_mask", gt_mask)
 
     # Model result
-    # print("Trained model result")
+    print("Trained model result")
     results = test_model.detect([original_image], verbose=1)
-    r = results[0]
-    print(r['class_ids'])
+    r = results[0] # Result of first image (the only one in this case).
+
+    # # Collection1 test data dict (image, high class category)
+    # truthDict = {
+    #     0: "Small group of 3 people in Winners Podium Area facing camera",
+    #     1: "Small group of 3 people in Winners Podium Area facing camera",
+    #     2: "Small group of 5 people in Winners Podium Area facing camera",
+    #     3: "Small group of 3 people in Winners Podium Area facing camera",
+    #     4: "Big group of 6 people in Winners Podium Area facing camera",
+    #     5: "Big group of 10 people on Lawn facing camera",
+    #     6: "Big group of 11 people on Lawn facing camera",
+    #     7: "Small group of 3 people on Lawn facing camera",
+    #     8: "Big group of 11 people on Lawn not facing camera",
+    #     9: "Small group of 4 people on Lawn facing camera",
+    #     10: "Two people in Forest facing camera",
+    #     11: "One person in Forest facing camera",
+    #     12: "One person in Forest facing camera",
+    #     13: "2 people in Forest facing camera",
+    #     14: "Small group of 5 people in Forest not facing camera",
+    #     15: "Crowd of at least 12 people in Parking Area not facing camera",
+    #     16: "Big group of 6 people in Parking Area facing camera",
+    #     17: "Small group of 4 people in Parking Area facing camera",
+    #     18: "Small group of 4 people in Parking Area facing camera",
+    #     19: "Small group of 4 people in Parking Area not facing camera",
+    #     20: "Big group of 6 people in Parking Area not facing camera",
+    #     21: "Crowd of at least 13 people in Main Event Area facing camera",
+    #     22: "Small group of 3 people in Main Event Area facing camera",
+    #     23: "Small group of 5 people in Main Event Area not facing camera",
+    #     24: "One person in Main Event Area facing camera",
+    #     25: "Crowd of at least 13 people in Main Event Area facing camera",
+    #     26: "Small group of 5 people in Main Event Area facing camera",
+    #     27: "One person in Main Event Area facing camera",
+    #     28: "Two people in Main Event Area facing camera",
+    #     29: "Two people in Main Event Area facing camera",
+    #     30: "Big group of 6 people in Main Event Area facing camera",
+    #     31: "Small group of 4 people in Main Event Area facing camera",
+    #     32: "One person in Forest facing camera",
+    #     33: "Small group of 3 people in Winners Podium Area facing camera",
+    #     34: "Two people in Forest facing camera",
+    #     35: "Small group of 3 people in Forest not facing camera",
+    #     36: "One person in Main Event Area facing camera",
+    #     37: "Small group of 5 people in Parking Area not facing camera",
+    #     38: "Two people in Forest not facing camera",
+    #     39: "Small group of 3 people in Forest facing camera",
+    #     40: "One person on Lawn facing camera",
+    # }
+
+    # # Collection2 test data dict (image, high class category)
+    # truthDict = {
+    #     0: "Crowd of people in Main Event Area facing camera",
+    #     1: "Big group of 8 people in Main Event Area facing camera",
+    #     2: "One person in Forest facing camera",
+    #     3: "One person on Lawn facing camera",
+    #     4: "One person on Forest facing camera",
+    #     5: "Small group of 4 people in Winners Podium Area facing camera",
+    #     6: "Small group of 5 people in Main Event Area not facing camera",
+    #     7: "Two people in Main Event Area facing camera",
+    #     8: "One person on Lawn facing camera",
+    #     9: "One person in Main Event Area not facing camera",
+    #     10: "One person on Lawn not facing camera",
+    #     11: "Crowd of people in Main Event Area facing camera",
+    #     12: "Big group of 8 peoople in Main Event Area not facing camera",
+    #     13: "One person in Forest not facing camera",
+    #     14: "One person on Lawn facing camera",
+    #     15: "One person in Forest facing camera",
+    #     16: "Two person in Forest not facing camera",
+    #     17: "Crowd of people in Main Event Area not facing camera",
+    #     18: "Small group of 3 people in Winners Podium Area facing camera",
+    #     19: "One person in Main Event Area not facing camera",
+    #     20: "Crowd of people in Main Event Area not facing camera",
+    #     21: "Two people in Main Event Area facing camera",
+    #     22: "One person on Lawn not facing camera",
+    #     23: "Small group of 5 people in Main Event Area not facing camera",
+    #     24: "Small group of 5 people in Forest facing camera",
+    #     25: "One person on Lawn facing camera",
+    #     26: "Small group of 4 people in Forest facing camera",
+    #     27: "Small group of 3 people in Forest facing camera",
+    #     28: "One person in Forest facing camera",
+    #     29: "Big group of 7 people in main Event Area not facing camera",
+    #     30: "Big group in Main Event Area facing camera",
+    #     31: "Crowd of people in Main Event Area facing camera",
+    #     32: "Small group of 4 people in Forest facing camera",
+    #     33: "One person On Lawn facing camera",
+    #     34: "Crowd of people in Main Event Area facing camera",
+    #     35: "Small group of 3 people in Main Event Area facing camera",
+    #     36: "Big group of 6 people in Winners Podium Area facing camera",
+    #     37: "One person in Forest facing camera",
+    #     38: "One person in Forest facing camera",
+    #     39: "Small group of 4 people on Lawn facing camera",
+    #     40: "Two people in Winners Podium Area facing camera",
+    # }
+
+    # print("Actaul event: ", truthDict[image_id])
+
+    # Classify a test image
+    classifyImage(r, 6, 11)
     
-    unique, counts = np.unique(r['class_ids'], return_counts=True)
-    result = np.column_stack((unique, counts)) 
-    print(result)
 
     visualize.display_instances(original_image, r['rois'], r['masks'], r['class_ids'],
-                                dataset_test.class_names, r['scores'], ax=get_ax(), show_bbox=False)
+                                dataset_test.class_names, r['scores'], show_bbox=True, figsize=(10,10))
+
+
+
+# def test_3_image(test_model, dataset_test, inference_config):
+
+#     image_id = 0
+#     for i in range(1,3):    
+        
+#         loopIterations = i * 6 # first = 1 * 6 = 6 | 0 - 6 | next 7 - 12
+#         listOfImages = []
+#         print(f"range loop {i}:", f"({image_id} - {loopIterations})")
+#         for id in range(image_id, loopIterations):
+#             original_image, image_meta, gt_class_id, gt_bbox, gt_mask = \
+#                 modellib.load_image_gt(dataset_test, inference_config,
+#                                     id, use_mini_mask=False)    
+#             listOfImages.append(original_image)
+
+#         # log("original_image", original_image)
+#         # log("image_meta", image_meta)
+#         # log("gt_class_id", gt_class_id)
+#         # log("gt_bbox", gt_bbox)
+#         # log("gt_mask", gt_mask)
+
+#         # Model result
+#         print("Trained model result")
+#         results = test_model.detect(listOfImages, verbose=1)
+
+#         for i in range(6):
+#             r = results[i] # Result of first image (the only one in this case).
+#             print(r["class_ids"])
+#         # # Classify a test image
+#         # classifyImage(r, 6, 11)
+
+#         # visualize.display_instances(original_image, r['rois'], r['masks'], r['class_ids'],
+#         #                             dataset_test.class_names, r['scores'], ax=get_ax(), show_bbox=False)
+
+#         image_id = loopIterations + 1
+
+def test_images(test_model, dataset_test, inference_config, image_count):
+
+    for image_id in range(image_count):    
+        
+        original_image, image_meta, gt_class_id, gt_bbox, gt_mask = \
+            modellib.load_image_gt(dataset_test, inference_config,
+                                image_id, use_mini_mask=False)    
+
+        # log("original_image", original_image)
+        # log("image_meta", image_meta)
+        # log("gt_class_id", gt_class_id)
+        # log("gt_bbox", gt_bbox)
+        # log("gt_mask", gt_mask)
+
+        # Model result
+        # print("Trained model result")
+        results = test_model.detect([original_image])
+        r = results[0] # Result of first image (the only one in this case).
+        
+        # Classify a test image
+        print(f"(Image {image_id}) ", end = '')
+        classifyImage(r, 6, 11)
+
+        # visualize.display_instances(original_image, r['rois'], r['masks'], r['class_ids'],
+        #                             dataset_test.class_names, r['scores'], ax=get_ax(), show_bbox=False)
